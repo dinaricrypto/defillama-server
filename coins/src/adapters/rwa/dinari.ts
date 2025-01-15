@@ -2,8 +2,10 @@ import { Write } from "../utils/dbInterfaces";
 import getWrites from "../utils/getWrites";
 import { getApi } from "../utils/sdk";
 
-const _getTokensAbi = "function getDShares() external view returns (address[] memory, address[] memory)"
-const _latestPriceAbi = "function latestFillPrice(address assetToken, address paymentToken) view returns (tuple(uint256 price, uint64 blocktime))"
+const _getTokensAbi =
+  "function getDShares() external view returns (address[] memory, address[] memory)";
+const _latestPriceAbi =
+  "function latestFillPrice(address assetToken, address paymentToken) view returns (tuple(uint256 price, uint64 blocktime))";
 const config: any = {
   arbitrum: {
     factory: "0xB4Ca72eA4d072C779254269FD56093D3ADf603b8",
@@ -26,16 +28,12 @@ const config: any = {
   blast: {
     factory: "0x6Aa1BDa7e764BC62589E64F371A4022B80B3c72a",
     processor: "0xA8a48C202AF4E73ad19513D37158A872A4ac79Cb",
-    quoteTokens: [
-      "0x4300000000000000000000000000000000000003",
-    ],
+    quoteTokens: ["0x4300000000000000000000000000000000000003"],
   },
   kinto: {
     factory: "0xE4Daa69e99F48AD0C4D4843deF4447253248A906",
     processor: "0xa089dC07A4baFd941a4323a9078D2c24be8A747C",
-    quoteTokens: [
-      "0x6F086dB0f6A621a915bC90295175065c9e5d9b8c",
-    ],
+    quoteTokens: ["0x6F086dB0f6A621a915bC90295175065c9e5d9b8c"],
     usdplus: "0x6F086dB0f6A621a915bC90295175065c9e5d9b8c",
   },
   base: {
@@ -49,20 +47,43 @@ const config: any = {
   },
 };
 
-async function getTokenPrices(chain: string, timestamp: number, writes: Write[] = []): Promise<Write[]> {
+async function getTokenPrices(
+  chain: string,
+  timestamp: number,
+  writes: Write[] = []
+): Promise<Write[]> {
   const api = await getApi(chain, timestamp);
-  const { getTokensAbi = _getTokensAbi, latestPriceAbi = _latestPriceAbi, factory, processor, quoteTokens, usdplus } = config[chain];
+  const {
+    getTokensAbi = _getTokensAbi,
+    latestPriceAbi = _latestPriceAbi,
+    factory,
+    processor,
+    quoteTokens,
+    usdplus,
+  } = config[chain];
   // dShares prices
-  let [tokens] = await api.call({ target: factory, abi: getTokensAbi, })
-  const supplies = await api.multiCall({  abi: 'erc20:totalSupply', calls: tokens})
-  tokens = tokens.filter((_: any, idx: number) => +supplies[idx] > 0)
-  const callParams = tokens.map((token: any) => quoteTokens.map((quoteToken: any) => ({ params: [token, quoteToken], }))).flat();
-  const rawPrices = (await api.multiCall({
+  let [tokens] = await api.call({ target: factory, abi: getTokensAbi });
+  const supplies = await api.multiCall({
+    abi: "erc20:totalSupply",
+    calls: tokens,
+  });
+  tokens = tokens.filter((_: any, idx: number) => +supplies[idx] > 0);
+  const callParams = tokens
+    .map((token: any) =>
+      quoteTokens.map((quoteToken: any) => ({ params: [token, quoteToken] }))
+    )
+    .flat();
+  const rawPrices = await api.multiCall({
     abi: latestPriceAbi,
     target: processor,
     calls: callParams,
+  });
+  const callsWithPrices = rawPrices.map((price: any, idx: number) => ({
+    blocktime: price.blocktime,
+    price: price.price,
+    token: callParams[idx].params[0],
+    quoteToken: callParams[idx].params[1],
   }));
-  const callsWithPrices = rawPrices.map((price: any, idx: number) => ({ blocktime: price.blocktime, price: price.price, token: callParams[idx].params[0], quoteToken: callParams[idx].params[1] }));
   const pricesByToken = callsWithPrices.reduce((acc: any, call: any) => {
     const token = call.token;
     if (!acc[token]) {
@@ -71,10 +92,14 @@ async function getTokenPrices(chain: string, timestamp: number, writes: Write[] 
     acc[token].push(call);
     return acc;
   }, {});
-  const prices = tokens.map((token: any) => pricesByToken[token].reduce(
-    (acc: any, call: any) => call.blocktime > acc.blocktime ? call : acc,
-    { blocktime: 0, price: 0},
-  )).map((p: any) => p.price / 1e18);
+  const prices = tokens
+    .map((token: any) =>
+      pricesByToken[token].reduce(
+        (acc: any, call: any) => (call.blocktime > acc.blocktime ? call : acc),
+        { blocktime: 0, price: 0 }
+      )
+    )
+    .map((p: any) => p.price / 1e18);
 
   // USD+
   if (usdplus) {
@@ -87,14 +112,19 @@ async function getTokenPrices(chain: string, timestamp: number, writes: Write[] 
   tokens.forEach((contract: any, idx: number) => {
     pricesObject[contract] = { price: prices[idx] };
   });
-  return getWrites({ chain, timestamp, pricesObject, projectName: "dinari", writes,})
-
+  return getWrites({
+    chain,
+    timestamp,
+    pricesObject,
+    projectName: "dinari",
+    writes,
+  });
 }
 
 export async function dinari(timestamp: number = 0): Promise<Write[]> {
   const writes: Write[] = [];
   for (const chain of Object.keys(config)) {
-    await getTokenPrices(chain, timestamp, writes)
+    await getTokenPrices(chain, timestamp, writes);
   }
   return writes;
 }
